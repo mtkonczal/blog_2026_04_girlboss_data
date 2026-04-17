@@ -6,7 +6,11 @@
       "Bash(Rscript:*)",
       "WebFetch(domain:www.bls.gov)",
       "Bash(curl -s -L -A \"Mozilla/5.0\" \"https://www.bls.gov/web/cewbd/table_f.txt\")",
-      "Bash(curl -s -L \"https://www.bls.gov/web/cewbd/table_f.txt\" -H \"Accept: text/plain\" -H \"User-Agent: Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36\" -H \"Referer: https://www.bls.gov/web/cewbd/\")"
+      "Bash(curl -s -L \"https://www.bls.gov/web/cewbd/table_f.txt\" -H \"Accept: text/plain\" -H \"User-Agent: Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36\" -H \"Referer: https://www.bls.gov/web/cewbd/\")",
+      "Read(//Users/mtkonczal/Documents/GitHub/**)",
+      "Bash(python3 *)",
+      "Bash(git -C /Users/mtkonczal/Documents/GitHub/blog_2026_04_girlboss_data ls-files data/)",
+      "Bash(git -C /Users/mtkonczal/Documents/GitHub/blog_2026_04_girlboss_data log --oneline -20)"
     ]
   }
 }

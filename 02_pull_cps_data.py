@@ -22,7 +22,7 @@ from pathlib import Path
 from ipumspy import IpumsApiClient, MicrodataExtract
 
 # Years to download — all 12 Basic Monthly samples per year
-TARGET_YEARS = [1990, 2019, 2024]
+TARGET_YEARS = [1992, 2019, 2024]
 
 
 def get_cps_samples(ipums):

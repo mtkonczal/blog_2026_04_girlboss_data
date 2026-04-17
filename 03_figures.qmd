@@ -203,9 +203,9 @@ ggplot(ces_total, aes(x = year, y = pct_women)) +
 save_fig("fig2_ces_women_share", width = 10, height = 5)
 ```
 
-```{r table-lfpr-20s}
-lfpr_20s <- cps |>
-  filter(AGE >= 20, AGE <= 29) |>
+```{r table-lfpr-late20s}
+lfpr_late20s <- cps |>
+  filter(AGE >= 25, AGE <= 29) |>
   group_by(YEAR, MONTH, female, college) |>
   summarise(
     pop = sum(WTFINL),
@@ -216,12 +216,12 @@ lfpr_20s <- cps |>
   group_by(YEAR, female, college) |>
   summarise(lfpr = mean(lfpr), .groups = "drop")
 
-lfpr_20s |>
+lfpr_late20s |>
   pivot_wider(names_from = YEAR, values_from = lfpr) |>
   arrange(college, female) |>
   knitr::kable(digits = 1,
-               col.names = c("Sex", "Education", "1990", "2019", "2024"),
-               caption = "Table 1: Labor Force Participation Rate (%), Ages 20-29. Source: IPUMS CPS. Mike Konczal.")
+               col.names = c("Sex", "Education", "1992", "2019", "2024"),
+               caption = "Table 1: Labor Force Participation Rate (%), Ages 25-29. Source: IPUMS CPS. Mike Konczal.")
 ```
 
 ```{r fig-industry-panels}

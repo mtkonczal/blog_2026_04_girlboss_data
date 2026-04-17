@@ -19,7 +19,7 @@ Run these in order. Steps 1 and 2 are data pulls; step 3 is the analysis.
 | # | File | What it does | Requires |
 |---|------|-------------|----------|
 | 1 | `01_pull_ces_data.R` | Pulls Current Employment Survey data via the `tidyusmacro` R package. Saves `data/ces_women.rds`. | R, `tidyusmacro` package |
-| 2 | `02_pull_cps_data.py` | Downloads CPS Basic Monthly microdata from IPUMS API for 1990, 2019, 2024. Saves a `.dta` file to `../data/` (one directory up). | Python, `ipumspy`, `IPUMS_API_KEY` |
+| 2 | `02_pull_cps_data.py` | Downloads CPS Basic Monthly microdata from IPUMS API for 1992, 2019, 2024. Saves a `.dta` file to `../data/` (one directory up). | Python, `ipumspy`, `IPUMS_API_KEY` |
 | 3 | `03_figures.qmd` | **Main output.** Loads CES, CPS, firm-size, and BLS API data. Produces Figures 1-6, Table 1, and Figure A1. Exports retina PNGs to `graphic/`. | R, Quarto, `BLS_KEY` in `.Renviron` |
 
 Supplementary analysis files (not part of the main pipeline, but use the same data):
@@ -73,7 +73,7 @@ Keys are never hardcoded. Do not print or expose them.
 
 ### CPS sample
 
-- IPUMS CPS Basic Monthly, years 1990, 2019, 2024 (all 12 months each).
+- IPUMS CPS Basic Monthly, years 1992, 2019, 2024 (all 12 months each).
 - Armed forces dropped (`CLASSWKR != 26`).
 - Ages 16+ with `LABFORCE > 0` for the main analysis; ages 20-29 for Table 1.
 - Education split: `EDUC >= 111` = college (BA+).
@@ -91,7 +91,7 @@ Keys are never hardcoded. Do not print or expose them.
 
 **Figure 2** (CES women's share): Women as a share of total nonfarm payroll employment, 1964-2025. Rose from 32% to 48% by 1995, then barely moved to 50% by 2025. Data: CES total nonfarm.
 
-**Table 1** (LFPR by age/education): LFPR for ages 20-29 by sex and college status in 1990, 2019, 2024. Tests whether the aggregate plateau masks divergence among young cohorts. It does not. Data: CPS microdata.
+**Table 1** (LFPR by age/education): LFPR for ages 20-29 by sex and college status in 1992, 2019, 2024. Tests whether the aggregate plateau masks divergence among young cohorts. It does not. Data: CPS microdata.
 
 **Figure 3** (three-sector panels): Employment levels and women's share for manufacturing, professional/business services, and health care/education. Shows that women's share within each major sector is flat or declining, even as total employment shifts dramatically. Data: CES supersectors.
 
