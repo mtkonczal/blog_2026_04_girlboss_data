@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(quarto render:*)",
+      "Bash(Rscript:*)",
+      "WebFetch(domain:www.bls.gov)",
+      "Bash(curl -s -L -A \"Mozilla/5.0\" \"https://www.bls.gov/web/cewbd/table_f.txt\")",
+      "Bash(curl -s -L \"https://www.bls.gov/web/cewbd/table_f.txt\" -H \"Accept: text/plain\" -H \"User-Agent: Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36\" -H \"Referer: https://www.bls.gov/web/cewbd/\")"
+    ]
+  }
+}

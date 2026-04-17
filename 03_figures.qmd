@@ -1,0 +1,517 @@
+---
+title: "The Girlboss Takeover Has a Data Problem"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(haven)
+library(scales)
+library(httr)
+library(jsonlite)
+
+# Export helper: save last plot as retina PNG to graphic/ folder
+save_fig <- function(name, width = 10, height = 6) {
+  ggsave(file.path("graphic", paste0(name, ".png")),
+         plot = last_plot(), width = width, height = height, dpi = "retina", bg = "white")
+}
+
+# Consistent colors and theme
+C_WOMEN <- "#E24A33"
+C_MEN   <- "#348ABD"
+C_GREY  <- "grey50"
+
+theme_blog <- theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.title.position = "plot",
+    plot.subtitle = element_text(color = "grey40", size = 10),
+    plot.caption = element_text(color = "grey50", size = 8, hjust = 0),
+    plot.caption.position = "plot",
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold")
+  )
+```
+
+```{r load-data}
+# --- CES data (employer survey, sub-industry level) ---
+ces <- read_rds("data/ces_women.rds")
+
+# Diffusion index industries: ~209 sub-industries spanning private sector
+di <- ces |> filter(diffusion_index, !is.na(pct_women), year >= 1990)
+
+# --- CPS data (individual survey, 1990/2019/2024) ---
+cps_file <- list.files(file.path(getwd(), "..", "data"),
+                       pattern = "^cps_.*\\.dta$", full.names = TRUE)
+cps <- read_dta(cps_file[1], col_select = c(
+  "year", "month", "age", "sex", "empstat", "classwkr",
+  "educ", "wtfinl", "labforce", "schlcoll"
+))
+names(cps) <- toupper(names(cps))
+
+cps <- cps |>
+  filter(CLASSWKR != 26) |>
+  filter(AGE >= 16, LABFORCE > 0) |>
+  mutate(
+    female = factor(ifelse(SEX == 2, "Women", "Men"), levels = c("Men", "Women")),
+    employed = EMPSTAT %in% c(10, 12),
+    in_lf = LABFORCE == 2,
+    college = ifelse(EDUC >= 111, "College (BA+)", "Non-College")
+  )
+```
+
+```{r bls-lfpr}
+# Pull women's and men's LFPR annual averages from BLS API (1948-2025)
+pull_bls <- function(series_ids, start_year, end_year) {
+  bls_key <- Sys.getenv("BLS_KEY")
+  resp <- POST(
+    "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+    content_type_json(),
+    body = toJSON(list(
+      seriesid = series_ids,
+      startyear = as.character(start_year),
+      endyear = as.character(end_year),
+      annualaverage = TRUE,
+      registrationkey = bls_key
+    ), auto_unbox = TRUE)
+  )
+  parsed <- fromJSON(content(resp, "text", encoding = "UTF-8"))
+  map2_dfr(
+    parsed$Results$series$seriesID,
+    parsed$Results$series$data,
+    \(id, d) d |>
+      filter(period == "M13") |>
+      transmute(series_id = id, year = as.integer(year), value = as.numeric(value))
+  )
+}
+
+# Prime-age (25-54) LFPR, seasonally adjusted monthly
+# Compute annual averages from 12 monthly values
+pull_bls_monthly <- function(series_ids, start_year, end_year) {
+  bls_key <- Sys.getenv("BLS_KEY")
+  resp <- POST(
+    "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+    content_type_json(),
+    body = toJSON(list(
+      seriesid = series_ids,
+      startyear = as.character(start_year),
+      endyear = as.character(end_year),
+      registrationkey = bls_key
+    ), auto_unbox = TRUE)
+  )
+  parsed <- fromJSON(content(resp, "text", encoding = "UTF-8"))
+  map2_dfr(
+    parsed$Results$series$seriesID,
+    parsed$Results$series$data,
+    \(id, d) d |>
+      filter(period != "M13") |>
+      transmute(series_id = id, year = as.integer(year),
+                value = as.numeric(value))
+  )
+}
+
+lfpr_bls <- tryCatch({
+  series <- c("LNS11300061", "LNS11300062")
+  raw <- bind_rows(
+    pull_bls_monthly(series, 1948, 1967),
+    pull_bls_monthly(series, 1968, 1987),
+    pull_bls_monthly(series, 1988, 2007),
+    pull_bls_monthly(series, 2008, 2025)
+  )
+  # Annual average of monthly SA values; drop years with missing months
+  raw |>
+    filter(!is.na(value)) |>
+    group_by(series_id, year) |>
+    #filter(n() == 12) |>
+    summarise(value = round(mean(value), 1), .groups = "drop") |>
+    mutate(sex = ifelse(series_id == "LNS11300061", "Men", "Women")) |>
+    arrange(sex, year)
+}, error = function(e) NULL)
+
+has_lfpr <- !is.null(lfpr_bls)
+```
+
+```{r fig-lfpr-timeseries}
+#| fig-width: 10
+#| fig-height: 5.5
+#| eval: !expr has_lfpr
+
+lfpr_label_years <- c(2000, max(lfpr_bls$year))
+lfpr_labels <- lfpr_bls |>
+  filter(year %in% lfpr_label_years) |>
+  mutate(label = paste0(year, ": ", value, "%"),
+         nudge = ifelse(sex == "Men", 1.8, -1.8))
+
+ggplot(lfpr_bls, aes(x = year, y = value, color = sex)) +
+  geom_line(linewidth = 1) +
+  geom_point(data = lfpr_labels, size = 2.5) +
+  geom_text(data = lfpr_labels,
+            aes(label = label, y = value + nudge),
+            size = 3.2, fontface = "bold", show.legend = FALSE) +
+  scale_color_manual(values = c("Men" = C_MEN, "Women" = C_WOMEN)) +
+  scale_x_continuous(breaks = seq(1950, 2025, 10)) +
+  labs(
+    title = "Figure 1: Women's Labor Force Participation Has Been Flat for 25 Years",
+    subtitle = "Prime-age (25-54) labor force participation rate (%). Annual average of monthly SA values.",
+    caption = "Source: BLS Current Population Survey (LNS11300061/62). Mike Konczal.",
+    x = NULL, y = NULL, color = NULL
+  ) +
+  theme_blog +
+  theme(legend.position = "top")
+save_fig("fig1_lfpr_timeseries", width = 10, height = 5.5)
+```
+
+```{r fig-ces-women-share}
+#| fig-width: 10
+#| fig-height: 5
+
+ces_total <- ces |>
+  filter(industry_name == "Total nonfarm", !is.na(pct_women))
+
+ces_labels <- ces_total |>
+  filter(year %in% c(1995, 2025)) |>
+  mutate(label = paste0(year, ": ", percent(pct_women, accuracy = 0.1)))
+
+ggplot(ces_total, aes(x = year, y = pct_women)) +
+  geom_line(color = C_WOMEN, linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = C_GREY, linewidth = 0.4) +
+  geom_point(data = ces_labels, color = C_WOMEN, size = 2.5) +
+  geom_text(data = ces_labels,
+            aes(label = label), color = C_WOMEN,
+            vjust = -1.2, size = 3.2, fontface = "bold") +
+  scale_y_continuous(labels = percent_format(), limits = c(0.25, 0.55),
+                     breaks = seq(0.25, 0.55, 0.05)) +
+  scale_x_continuous(breaks = seq(1965, 2025, 10)) +
+  labs(
+    title = "Figure 2: Women's Share of Payroll Employment, Flat Since the Mid-1990s",
+    subtitle = "Women's share of total nonfarm employment (%). M13 annual average.",
+    caption = "Source: BLS Current Employment Survey. Mike Konczal.",
+    x = NULL, y = NULL
+  ) +
+  theme_blog +
+  theme(panel.grid.major.x = element_line(linewidth = 0.2, color = "grey90"))
+save_fig("fig2_ces_women_share", width = 10, height = 5)
+```
+
+```{r table-lfpr-20s}
+lfpr_20s <- cps |>
+  filter(AGE >= 20, AGE <= 29) |>
+  group_by(YEAR, MONTH, female, college) |>
+  summarise(
+    pop = sum(WTFINL),
+    lf  = sum(WTFINL[in_lf]),
+    .groups = "drop"
+  ) |>
+  mutate(lfpr = 100 * lf / pop) |>
+  group_by(YEAR, female, college) |>
+  summarise(lfpr = mean(lfpr), .groups = "drop")
+
+lfpr_20s |>
+  pivot_wider(names_from = YEAR, values_from = lfpr) |>
+  arrange(college, female) |>
+  knitr::kable(digits = 1,
+               col.names = c("Sex", "Education", "1990", "2019", "2024"),
+               caption = "Table 1: Labor Force Participation Rate (%), Ages 20-29. Source: IPUMS CPS. Mike Konczal.")
+```
+
+```{r fig-industry-panels}
+#| fig-width: 12
+#| fig-height: 10
+
+industries <- c("Manufacturing",
+                 "Professional and business services",
+                 "Private education and health services")
+ind_short <- c("Manufacturing", "Professional &\nBusiness Services",
+               "Health Care &\nEducation")
+
+ind_data <- ces |>
+  filter(industry_name %in% industries, !is.na(women)) |>
+  mutate(
+    men = total - women,
+    industry_short = factor(
+      case_when(
+        str_detect(industry_name, "Manufactur") ~ ind_short[1],
+        str_detect(industry_name, "Professional") ~ ind_short[2],
+        str_detect(industry_name, "education") ~ ind_short[3]
+      ),
+      levels = ind_short
+    )
+  )
+
+# Panel A: employment levels
+p_levels <- ind_data |>
+  select(year, industry_short, men, women) |>
+  pivot_longer(c(men, women), names_to = "sex", values_to = "emp") |>
+  mutate(sex = factor(str_to_title(sex), levels = c("Men", "Women"))) |>
+  ggplot(aes(x = year, y = emp / 1000, color = sex)) +
+  geom_line(linewidth = 0.9) +
+  facet_wrap(~industry_short, scales = "free_y") +
+  scale_color_manual(values = c("Men" = C_MEN, "Women" = C_WOMEN)) +
+  labs(title = "A. Employment Levels (millions)", y = NULL, x = NULL, color = NULL) +
+  theme_blog
+
+# Panel B: women's share
+p_share <- ind_data |>
+  ggplot(aes(x = year, y = pct_women)) +
+  geom_line(color = C_WOMEN, linewidth = 0.9) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = C_GREY, linewidth = 0.3) +
+  facet_wrap(~industry_short, scales = "free_y") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "B. Women's Share of Sector Employment", y = NULL, x = NULL) +
+  theme_blog
+
+library(patchwork)
+p_levels / p_share +
+  plot_annotation(
+    title = "Figure 3: Employment and Women's Share in Three Major Sectors",
+    caption = "Source: BLS Current Employment Survey, M13 annual average. Mike Konczal.",
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.title.position = "plot",
+      plot.caption = element_text(color = "grey50", size = 8, hjust = 0),
+      plot.caption.position = "plot"
+    )
+  )
+save_fig("fig3_industry_panels", width = 12, height = 10)
+```
+
+```{r fig-scatter-quintiles}
+#| fig-width: 14
+#| fig-height: 6
+
+scatter_data <- di |>
+  filter(year %in% c(1990, 2025)) |>
+  select(industry_name, year, pct_women) |>
+  pivot_wider(names_from = year, values_from = pct_women, names_prefix = "y") |>
+  filter(!is.na(y1990), !is.na(y2025))
+
+scatter_r <- round(cor(scatter_data$y1990, scatter_data$y2025), 3)
+
+p_scatter <- ggplot(scatter_data, aes(x = y1990, y = y2025)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = C_GREY) +
+  geom_point(alpha = 0.5, size = 1.8, color = C_MEN) +
+  geom_smooth(method = "lm", se = FALSE, color = C_WOMEN, linewidth = 0.8) +
+  scale_x_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  annotate("text", x = 0.1, y = 0.92,
+           label = paste0("r = ", scatter_r), size = 4, fontface = "bold") +
+  labs(
+    title = "A. Industry Gender Composition\nIs Almost Entirely Persistent",
+    subtitle = paste0("Each dot = one of ", nrow(scatter_data),
+                      " industries.\nDashed line = no change."),
+    x = "Women's Share, 1990", y = "Women's Share, 2025"
+  ) +
+  theme_blog +
+  theme(panel.grid.major.x = element_line(linewidth = 0.2, color = "grey90"))
+
+quintile_src <- di |>
+  filter(year %in% c(1995, 2025)) |>
+  select(industry_name, year, pct_women) |>
+  pivot_wider(names_from = year, values_from = pct_women, names_prefix = "y") |>
+  filter(!is.na(y1995), !is.na(y2025))
+
+quintile_data <- quintile_src |>
+  mutate(change = y2025 - y1995, quintile = ntile(y1995, 5)) |>
+  group_by(quintile) |>
+  summarize(
+    mean_1995 = mean(y1995), mean_change = mean(change), .groups = "drop"
+  ) |>
+  mutate(label = paste0("Q", quintile, "\n(",
+                        percent(mean_1995, accuracy = 1), " in '95)"))
+
+p_quintile <- ggplot(quintile_data, aes(x = label, y = mean_change, fill = mean_change > 0)) +
+  geom_col(width = 0.6) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  geom_text(aes(label = percent(mean_change, accuracy = 0.1)),
+            vjust = ifelse(quintile_data$mean_change > 0, -0.5, 1.5), size = 3.5) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  scale_fill_manual(values = c(C_WOMEN, C_MEN), guide = "none") +
+  labs(
+    title = "B. Mean Reversion,\nNot Tipping Points",
+    subtitle = "Mean change in women's share\nby 1995 starting-level quintile.",
+    x = "Quintile of Women's Share in 1995",
+    y = "Mean Change in Women's Share"
+  ) +
+  theme_blog
+
+p_scatter + p_quintile +
+  plot_annotation(
+    title = "Figure 4: Industry Gender Composition Is Persistent and Mean-Reverting",
+    caption = "Source: BLS Current Employment Survey. Mike Konczal.",
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.title.position = "plot",
+      plot.caption = element_text(color = "grey50", size = 8, hjust = 0),
+      plot.caption.position = "plot"
+    )
+  )
+save_fig("fig4_scatter_quintiles", width = 14, height = 6)
+```
+
+```{r fig-shift-share}
+#| fig-width: 9
+#| fig-height: 5
+
+ss <- di |>
+  filter(year %in% c(1999, 2025), !is.na(women), !is.na(total)) |>
+  select(industry_name, year, total, women, pct_women) |>
+  pivot_wider(names_from = year, values_from = c(total, women, pct_women), names_prefix = "y") |>
+  filter(!is.na(pct_women_y1999), !is.na(pct_women_y2025))
+
+total_1999 <- sum(ss$total_y1999)
+ss <- ss |>
+  mutate(
+    share_1999 = total_y1999 / total_1999,
+    share_2025 = total_y2025 / sum(total_y2025),
+    delta_pct = pct_women_y2025 - pct_women_y1999,
+    delta_share = share_2025 - share_1999,
+    within = share_1999 * delta_pct,
+    between = delta_share * pct_women_y1999,
+    interaction = delta_share * delta_pct
+  )
+
+total_change <- round((sum(ss$women_y2025)/sum(ss$total_y2025) -
+                        sum(ss$women_y1999)/sum(ss$total_y1999)) * 100, 1)
+within_total <- round(sum(ss$within) * 100, 1)
+between_total <- round(sum(ss$between) * 100, 1)
+interaction_total <- round(sum(ss$interaction) * 100, 1)
+
+decomp <- tibble(
+  Component = c(
+    paste0("Within\n(gender mix changed\ninside industries)\n", sprintf("%+.1fpp", within_total)),
+    paste0("Between\n(economy shifted toward\nfemale industries)\n", sprintf("%+.1fpp", between_total)),
+    paste0("Interaction\n\n\n", sprintf("%+.1fpp", interaction_total))
+  ),
+  pp = c(sum(ss$within), sum(ss$between), sum(ss$interaction))
+) |>
+  mutate(Component = fct_inorder(Component))
+
+ggplot(decomp, aes(x = Component, y = pp * 100, fill = Component)) +
+  geom_col(width = 0.6) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  scale_fill_manual(values = c("#5e4fa2", "#3288bd", "#aadba5"), guide = "none") +
+  labs(
+    title = paste0("Figure 5: Shift-Share Decomposition of ", total_change,
+                   "pp Increase in Women's Employment Share"),
+    subtitle = "Contribution in percentage points. 209 CES diffusion index industries, 1999-2025.",
+    caption = "Source: BLS Current Employment Survey. Mike Konczal.",
+    x = NULL, y = NULL
+  ) +
+  theme_blog
+save_fig("fig5_shift_share", width = 9, height = 5)
+```
+
+The shift-share decomposition separates the aggregate change in women's employment share into three components. Let $s_{it}$ be women's share of employment in industry $i$ at time $t$, and $w_{it}$ be industry $i$'s share of total employment. The aggregate women's share is $\bar{s}_t = \sum_i w_{it} \, s_{it}$. We decompose its change from period 0 to period 1 as:
+
+$$\Delta \bar{s} = \underbrace{\sum_i w_{i0} \, \Delta s_i}_{\textbf{Within}} + \underbrace{\sum_i \Delta w_i \cdot s_{i0}}_{\textbf{Between}} + \underbrace{\sum_i \Delta w_i \cdot \Delta s_i}_{\textbf{Interaction}}$$
+
+where $\Delta s_i = s_{i1} - s_{i0}$ and $\Delta w_i = w_{i1} - w_{i0}$.
+
+-   **Within**: Holding industry employment shares fixed at their 1999 values, how much did the gender composition change *inside* industries? A positive value means industries became more female on average.
+-   **Between**: Holding each industry's gender mix fixed at its 1999 level, how much did the *reallocation of employment across industries* change the aggregate? A positive value means the economy shifted toward industries that were already more female.
+-   **Interaction**: A cross-term capturing industries that both grew *and* became more female (or shrank and became more male). Usually small.
+
+This decomposition is **exact**: the three terms sum precisely to the total change, with no approximation or residual.
+
+```{r fig-structural}
+#| fig-width: 9
+#| fig-height: 5.5
+
+firm_size <- read_rds("data/firm_size.rds") |>
+  distinct(year, size_class, .keep_all = TRUE)
+
+firm_bars <- firm_size |>
+  filter(year %in% c(1993, 2025)) |>
+  mutate(
+    group = case_when(
+      size_class %in% c("1-4", "5-9", "10-19", "20-49") ~ "Under 50",
+      size_class %in% c("50-99", "100-249", "250-499", "500-999") ~ "50-999",
+      size_class == "1000+" ~ "1,000+"
+    ),
+    group = factor(group, levels = c("Under 50", "50-999", "1,000+"))
+  ) |>
+  group_by(year, group) |>
+  summarise(share = sum(share), .groups = "drop")
+
+ggplot(firm_bars, aes(x = group, y = share, fill = factor(year))) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_text(aes(label = paste0(round(share, 1), "%")),
+            position = position_dodge(width = 0.7), vjust = -0.4, size = 3.5) +
+  scale_fill_manual(values = c("1993" = "#a8c8e0", "2025" = "#1a3a5c")) +
+  scale_y_continuous(limits = c(0, 55), breaks = seq(0, 50, 10),
+                     labels = function(x) paste0(x, "%")) +
+  labs(
+    title = "Figure 6: Americans Increasingly Work at Larger Firms",
+    subtitle = "Share of private-sector employment by firm size.",
+    caption = "Source: BLS QCEW Business Dynamics. Mike Konczal.",
+    x = NULL, y = NULL, fill = NULL
+  ) +
+  theme_blog + theme(legend.position = "top")
+save_fig("fig6_structural_changes", width = 9, height = 5.5)
+```
+
+```{r ar1-test}
+panel_ar <- di |>
+  arrange(industry_name, year) |>
+  group_by(industry_name) |>
+  mutate(lag_pct = lag(pct_women)) |>
+  filter(!is.na(lag_pct)) |>
+  ungroup()
+
+fe <- lm(pct_women ~ lag_pct + factor(industry_name), data = panel_ar)
+rho_fe <- coef(fe)["lag_pct"]
+se_fe <- summary(fe)$coefficients["lag_pct", 2]
+t_stat <- (rho_fe - 1) / se_fe
+
+ar1_by_ind <- di |>
+  arrange(industry_name, year) |>
+  group_by(industry_name) |>
+  filter(n() >= 10) |>
+  mutate(lag_pct = lag(pct_women)) |>
+  filter(!is.na(lag_pct)) |>
+  summarize(
+    ar1_coef = coef(lm(pct_women ~ lag_pct))[2],
+    ar1_se = summary(lm(pct_women ~ lag_pct))$coefficients[2, 2],
+    .groups = "drop"
+  ) |>
+  mutate(sig_explosive = (ar1_coef - 1.96 * ar1_se) > 1)
+
+n_above_1 <- sum(ar1_by_ind$ar1_coef > 1)
+n_sig_exp <- sum(ar1_by_ind$sig_explosive)
+```
+
+```{r fig-ar1-dist}
+#| fig-width: 8
+#| fig-height: 5
+
+ggplot(ar1_by_ind, aes(x = ar1_coef)) +
+  geom_histogram(binwidth = 0.025, fill = C_MEN, color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = C_WOMEN, linewidth = 0.8) +
+  annotate("text", x = 1.02, y = Inf, label = "Explosive\nthreshold",
+           color = C_WOMEN, hjust = 0, vjust = 1.5, size = 3.2) +
+  annotate("text", x = 0.5, y = Inf,
+           label = paste0("Median: ", round(median(ar1_by_ind$ar1_coef), 3),
+                          "\n", n_above_1, " of ", nrow(ar1_by_ind), " above 1.0",
+                          "\n", n_sig_exp, " significantly explosive"),
+           hjust = 0, vjust = 1.5, size = 3.2) +
+  labs(
+    title = "Figure A1: Almost No Industries Show Explosive Gender Dynamics",
+    subtitle = "Industry-by-industry AR(1) estimates, 1990-2025.",
+    caption = "Source: BLS Current Employment Survey. Mike Konczal.",
+    x = expression(paste("AR(1) coefficient (", hat(rho), ")")),
+    y = "Number of Industries"
+  ) +
+  theme_blog +
+  theme(panel.grid.major.x = element_line(linewidth = 0.2, color = "grey90"))
+save_fig("figA1_ar1_distribution", width = 8, height = 5)
+```

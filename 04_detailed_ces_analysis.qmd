@@ -1,0 +1,440 @@
+---
+title: "Are Women 'Taking Over' Industries?"
+subtitle: "An Analysis of the CES Diffusion Index Industries, 1990-2025"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(scales)
+
+ces_women <- read_rds("data/ces_women.rds")
+
+# Working sample: 209 diffusion index industries with women's employment data
+di <- ces_women %>%
+  filter(diffusion_index, !is.na(pct_women), year >= 1990)
+
+n_industries <- n_distinct(di$industry_name)
+```
+
+## Motivation
+
+A recurring conservative argument holds that women have been "taking over" industries in recent decades: once women's share of employment in an industry crosses some tipping point, the logic goes, the trend accelerates, crowding men out. This implies a bimodal or polarizing distribution of women's employment shares, with industries drifting toward the extremes over time.
+
+We can test this claim directly using the Current Employment Survey (CES). The CES reports total and women's employment for `r n_industries` of the 249 industries in BLS's standard diffusion index. These are broad industry categories spanning the full private-sector economy. We have annual data from 1990 through 2025.
+
+## The Distribution Is Remarkably Stable
+
+```{r distribution-histogram}
+#| fig-cap: "Distribution of women's employment share across 209 CES industries"
+#| fig-height: 5
+#| fig-width: 8
+
+di %>%
+  filter(year %in% c(1990, 2000, 2010, 2025)) %>%
+  mutate(year = factor(year)) %>%
+  ggplot(aes(x = pct_women, fill = year)) +
+  geom_histogram(binwidth = 0.05, alpha = 0.7, position = "identity", color = "white") +
+  facet_wrap(~year, ncol = 2) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "gray40") +
+  scale_x_continuous(labels = percent_format(), breaks = seq(0, 1, 0.2)) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(
+    x = "Women's Share of Industry Employment",
+    y = "Number of Industries",
+    title = "The Distribution of Women's Employment Shares Has Barely Moved",
+    subtitle = "209 CES diffusion index industries"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+The histograms across four snapshot years are nearly indistinguishable. The distribution is unimodal, right-skewed (more industries are male-dominated than female-dominated), and stable. There is no sign of polarization: industries are not drifting toward the extremes.
+
+```{r summary-stats}
+#| tbl-cap: "Summary statistics: women's share of employment"
+
+di %>%
+  filter(year %in% c(1990, 2000, 2010, 2025)) %>%
+  group_by(Year = year) %>%
+  summarize(
+    Mean = mean(pct_women),
+    Median = median(pct_women),
+    `25th pctile` = quantile(pct_women, 0.25),
+    `75th pctile` = quantile(pct_women, 0.75),
+    `Majority women (>50%)` = sum(pct_women > 0.5),
+    .groups = "drop"
+  ) %>%
+  mutate(across(Mean:`75th pctile`, ~percent(., accuracy = 0.1))) %>%
+  knitr::kable()
+```
+
+The unweighted mean across industries has held nearly constant at about 40% since 1990. The number of majority-women industries barely budges: 62 in 1990, 65 in 2025, out of 209. There is no secular trend.
+
+## Very Few Industries Cross the 50% Threshold
+
+```{r threshold-crossers}
+#| tbl-cap: "Industries that crossed the 50% threshold between 1990 and 2025"
+
+crossers <- di %>%
+  filter(year %in% c(1990, 2025)) %>%
+  select(industry_name, year, pct_women) %>%
+  pivot_wider(names_from = year, values_from = pct_women, names_prefix = "y") %>%
+  filter(!is.na(y1990), !is.na(y2025)) %>%
+  mutate(
+    crossed_to_majority = y1990 < 0.5 & y2025 >= 0.5,
+    crossed_to_minority = y1990 >= 0.5 & y2025 < 0.5
+  )
+
+bind_rows(
+  crossers %>% filter(crossed_to_majority) %>%
+    mutate(Direction = "Became majority women") %>%
+    select(Direction, Industry = industry_name, `1990` = y1990, `2025` = y2025),
+  crossers %>% filter(crossed_to_minority) %>%
+    mutate(Direction = "Became majority men") %>%
+    select(Direction, Industry = industry_name, `1990` = y1990, `2025` = y2025)
+) %>%
+  mutate(across(`1990`:`2025`, ~percent(., accuracy = 0.1))) %>%
+  knitr::kable()
+```
+
+Only 8 industries shifted from minority-women to majority-women over 35 years. And 6 went the other direction. This is not a story of one-way "takeover."
+
+## Industries Are Sticky, Not Tipping
+
+If there were a tipping-point dynamic, we would expect industries near 50% to accelerate away from it. Instead, we find the opposite: industries are highly persistent, and the changes that do occur exhibit mild *mean reversion*.
+
+```{r scatter-1990-vs-2025}
+#| fig-cap: "Women's employment share: 1990 vs. 2025"
+#| fig-height: 6
+#| fig-width: 7
+
+scatter_data <- di %>%
+  filter(year %in% c(1990, 2025)) %>%
+  select(industry_name, supersector_name, year, pct_women) %>%
+  pivot_wider(names_from = year, values_from = pct_women, names_prefix = "y") %>%
+  filter(!is.na(y1990), !is.na(y2025))
+
+ggplot(scatter_data, aes(x = y1990, y = y2025)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.5, size = 1.8, color = "#2c7bb6") +
+  geom_smooth(method = "lm", se = FALSE, color = "#d7191c", linewidth = 0.8) +
+  scale_x_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  annotate("text", x = 0.15, y = 0.9,
+           label = paste0("Correlation: ", round(cor(scatter_data$y1990, scatter_data$y2025), 3)),
+           hjust = 0, size = 3.5) +
+  labs(
+    x = "Women's Share, 1990",
+    y = "Women's Share, 2025",
+    title = "Industry Gender Composition Is Highly Persistent",
+    subtitle = "Each point is one of 209 CES industries; dashed line = no change"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+The correlation between 1990 and 2025 levels is 0.955. Industries' gender composition is almost entirely determined by where they started 35 years ago. The fitted line sits slightly below the 45-degree line at the top and above it at the bottom, consistent with mild convergence rather than divergence.
+
+```{r quintile-changes}
+#| fig-cap: "Mean change in women's share by 1990 starting quintile"
+#| fig-height: 4.5
+#| fig-width: 7
+
+changes <- scatter_data %>%
+  mutate(
+    change = y2025 - y1990,
+    quintile = ntile(y1990, 5)
+  )
+
+quintile_summary <- changes %>%
+  group_by(quintile) %>%
+  summarize(
+    mean_1990 = mean(y1990),
+    mean_change = mean(change),
+    .groups = "drop"
+  ) %>%
+  mutate(label = paste0("Q", quintile, "\n(", percent(mean_1990, accuracy = 1), " in 1990)"))
+
+ggplot(quintile_summary, aes(x = label, y = mean_change, fill = mean_change > 0)) +
+  geom_col(width = 0.6) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  scale_fill_manual(values = c("#d7191c", "#2c7bb6"), guide = "none") +
+  labs(
+    x = "Quintile of Women's Share in 1990",
+    y = "Mean Change in Women's Share, 1990-2025",
+    title = "Mean Reversion, Not Tipping Points",
+    subtitle = "The most female-dominated industries lost female share; male-dominated industries gained"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+Industries that started with the highest women's share (quintile 5, averaging 72% women in 1990) saw their women's share *decline* by nearly 2 percentage points on average. The most male-dominated quintile saw a slight increase. If "crowding out" were real, we would expect the opposite pattern: high-female industries should be pulling further away. They are not.
+
+## AR(1) Test: Persistent but Mean-Reverting, Not Explosive
+
+The "tipping point" claim implies explosive dynamics: once women's share starts rising in an industry, it should accelerate. We can test this formally by estimating an AR(1) process for each industry's women's employment share. A coefficient above 1 would indicate explosive, self-reinforcing dynamics. A coefficient below 1 indicates mean reversion.
+
+We estimate $s_{it} = \alpha_i + \rho \, s_{i,t-1} + \varepsilon_{it}$ where $s_{it}$ is women's share of employment in industry $i$ in year $t$.
+
+```{r ar1-panel}
+#| tbl-cap: "Panel AR(1) estimates for women's share of industry employment"
+
+panel_ar <- di %>%
+  arrange(industry_name, year) %>%
+  group_by(industry_name) %>%
+  mutate(lag_pct = lag(pct_women)) %>%
+  filter(!is.na(lag_pct)) %>%
+  ungroup()
+
+# Pooled (no FE)
+pooled <- lm(pct_women ~ lag_pct, data = panel_ar)
+
+# Industry fixed effects
+fe <- lm(pct_women ~ lag_pct + factor(industry_name), data = panel_ar)
+
+rho_pooled <- coef(pooled)["lag_pct"]
+se_pooled <- summary(pooled)$coefficients["lag_pct", 2]
+rho_fe <- coef(fe)["lag_pct"]
+se_fe <- summary(fe)$coefficients["lag_pct", 2]
+
+tibble(
+  Model = c("Pooled AR(1)", "Industry fixed effects"),
+  `$\\hat{\\rho}$` = c(rho_pooled, rho_fe),
+  `Std. Error` = c(se_pooled, se_fe),
+  `t-stat (H0: rho=1)` = c((rho_pooled - 1) / se_pooled, (rho_fe - 1) / se_fe)
+) %>%
+  mutate(across(where(is.numeric), ~round(., 3))) %>%
+  knitr::kable()
+```
+
+The pooled estimate of $\hat{\rho} = 0.998$ reflects the high persistence of women's employment shares, but this confounds between-industry variation with within-industry dynamics. The more informative fixed-effects estimate is $\hat{\rho} = 0.920$ (SE = 0.005), which strongly rejects the unit root ($t = -16.6$) and even more decisively rejects explosive dynamics ($\rho > 1$). Women's share in a typical industry is persistent but mean-reverting: shocks fade, they don't compound.
+
+```{r ar1-distribution}
+#| fig-cap: "Distribution of industry-specific AR(1) coefficients"
+#| fig-height: 5
+#| fig-width: 7
+
+ar1_by_industry <- di %>%
+  arrange(industry_name, year) %>%
+  group_by(industry_name) %>%
+  filter(n() >= 10) %>%
+  mutate(lag_pct = lag(pct_women)) %>%
+  filter(!is.na(lag_pct)) %>%
+  summarize(
+    ar1_coef = coef(lm(pct_women ~ lag_pct))[2],
+    ar1_se = summary(lm(pct_women ~ lag_pct))$coefficients[2, 2],
+    .groups = "drop"
+  ) %>%
+  mutate(sig_explosive = (ar1_coef - 1.96 * ar1_se) > 1)
+
+n_above_1 <- sum(ar1_by_industry$ar1_coef > 1)
+n_sig_explosive <- sum(ar1_by_industry$sig_explosive)
+
+ggplot(ar1_by_industry, aes(x = ar1_coef)) +
+  geom_histogram(binwidth = 0.025, fill = "#2c7bb6", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "#d7191c", linewidth = 0.8) +
+  annotate("text", x = 1.02, y = Inf, label = "Explosive\nthreshold",
+           color = "#d7191c", hjust = 0, vjust = 1.5, size = 3.2) +
+  annotate("text", x = 0.5, y = Inf,
+           label = paste0("Median: ", round(median(ar1_by_industry$ar1_coef), 3),
+                          "\n", n_above_1, " of 209 above 1.0",
+                          "\n", n_sig_explosive, " significantly explosive"),
+           hjust = 0, vjust = 1.5, size = 3.2) +
+  labs(
+    x = expression(paste("Industry-specific AR(1) coefficient (", hat(rho), ")")),
+    y = "Number of Industries",
+    title = "Almost No Industries Show Explosive Gender Dynamics",
+    subtitle = "Industry-by-industry AR(1) estimates, 1990-2025"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+The distribution of industry-specific AR(1) coefficients is centered at 0.89, well below 1. Only `r n_above_1` of 209 industries have point estimates above 1, and just `r n_sig_explosive` are statistically significant at the 95% level. The data overwhelmingly favor a model of slow mean reversion over tipping-point dynamics.
+
+## The Transition Matrix: Almost Nobody Moves
+
+```{r transition-matrix}
+#| tbl-cap: "How many industries changed gender-composition bins between 1990 and 2025"
+
+trans <- scatter_data %>%
+  mutate(
+    bin_1990 = cut(y1990, breaks = c(0, 0.2, 0.4, 0.5, 0.6, 0.8, 1),
+                   labels = c("<20%", "20-40%", "40-50%", "50-60%", "60-80%", "80%+"),
+                   include.lowest = TRUE),
+    bin_2025 = cut(y2025, breaks = c(0, 0.2, 0.4, 0.5, 0.6, 0.8, 1),
+                   labels = c("<20%", "20-40%", "40-50%", "50-60%", "60-80%", "80%+"),
+                   include.lowest = TRUE)
+  )
+
+t_matrix <- table(`1990 Bin` = trans$bin_1990, `2025 Bin` = trans$bin_2025)
+knitr::kable(t_matrix)
+```
+
+The diagonal dominates. Of 44 industries below 20% women in 1990, 34 are still below 20% in 2025 and none crossed 40%. Of the 8 industries above 80% women in 1990, 5 remained above 80% and 3 slipped to 60-80%. The story is one of stasis, not conquest.
+
+## Segregation Hasn't Changed Much Either
+
+The Duncan-Duncan dissimilarity index measures how much of the female (or male) workforce would need to change industries to achieve gender parity everywhere. A value of 0 means perfect integration; 1 means complete segregation.
+
+```{r duncan-index}
+#| fig-cap: "Duncan-Duncan dissimilarity index, 1990-2025"
+#| fig-height: 4.5
+#| fig-width: 7
+
+duncan <- di %>%
+  group_by(year) %>%
+  summarize(
+    duncan = 0.5 * sum(abs(women / sum(women) - (total - women) / sum(total - women))),
+    .groups = "drop"
+  )
+
+ggplot(duncan, aes(x = year, y = duncan)) +
+  geom_line(color = "#2c7bb6", linewidth = 1) +
+  geom_point(color = "#2c7bb6", size = 2) +
+  scale_y_continuous(labels = percent_format(), limits = c(0.3, 0.4)) +
+  labs(
+    x = NULL,
+    y = "Dissimilarity Index",
+    title = "Occupational Segregation by Industry: Flat for 35 Years",
+    subtitle = "Duncan-Duncan index across 209 CES industries"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+The index has barely moved: from 36.1% in 1990 to 35.0% in 2025. If anything, there is glacially slow *integration*, not increasing female dominance.
+
+## Employment-Weighted View
+
+The unweighted industry counts above treat a 10,000-employee industry the same as a 2-million-employee one. Weighting by employment gives a slightly different picture.
+
+```{r emp-weighted}
+#| fig-cap: "Share of total employment in majority-women industries, 1990-2025"
+#| fig-height: 4.5
+#| fig-width: 7
+
+emp_weighted <- di %>%
+  group_by(year) %>%
+  summarize(
+    unwt_mean = mean(pct_women),
+    wt_mean = weighted.mean(pct_women, total),
+    emp_share_majority = sum(total[pct_women > 0.5]) / sum(total),
+    .groups = "drop"
+  )
+
+ggplot(emp_weighted, aes(x = year)) +
+  geom_line(aes(y = wt_mean, color = "Employment-weighted mean\nwomen's share"), linewidth = 1) +
+  geom_line(aes(y = emp_share_majority, color = "Share of employment in\nmajority-women industries"), linewidth = 1) +
+  geom_line(aes(y = unwt_mean, color = "Unweighted mean\nwomen's share"), linewidth = 1, linetype = "dashed") +
+  scale_y_continuous(labels = percent_format(), limits = c(0.35, 0.55)) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    x = NULL,
+    y = NULL,
+    color = NULL,
+    title = "Employment-Weighted Measures Show Growth in Health and Education",
+    subtitle = "209 CES diffusion index industries, 1990-2025"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+The employment-weighted mean women's share rose from about 46% to 49%, and the share of total employment in majority-women industries reached 50% by 2025. But this reflects the growth of a few large, already female-dominated sectors, especially health care and education, not a broad pattern of women "taking over" new industries. Industries are not becoming more female; female-heavy industries are becoming larger.
+
+## What About the Near-50% Industries?
+
+If a tipping-point dynamic existed, industries near 50% should be the most unstable, with small perturbations leading to large divergences. Instead, industries in the 45-55% range in 2000 scatter in both directions by 2025, with no systematic tendency to accelerate away from parity.
+
+```{r near-parity}
+#| fig-cap: "Trajectory of industries that were 45-55% women in 2000"
+#| fig-height: 5.5
+#| fig-width: 8
+
+near_parity_2000 <- di %>%
+  filter(year == 2000, pct_women >= 0.45, pct_women <= 0.55) %>%
+  pull(industry_name)
+
+di %>%
+  filter(industry_name %in% near_parity_2000, year >= 2000) %>%
+  ggplot(aes(x = year, y = pct_women, group = industry_name)) +
+  geom_line(alpha = 0.3, color = "#2c7bb6") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray40") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    x = NULL,
+    y = "Women's Share",
+    title = paste0("No Tipping Point: ", length(near_parity_2000),
+                   " Industries Near 50% in 2000 Scatter in Both Directions"),
+    subtitle = "Each line is an industry that was 45-55% women in 2000"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## The Biggest Movers
+
+For completeness, here are the industries with the largest shifts in either direction.
+
+```{r biggest-movers}
+#| fig-cap: "Industries with the largest absolute changes in women's share, 1990-2025"
+#| fig-height: 7
+#| fig-width: 8
+
+top_movers <- changes %>%
+  arrange(desc(abs(change))) %>%
+  slice_head(n = 20) %>%
+  mutate(
+    industry_name = str_wrap(industry_name, width = 40),
+    industry_name = fct_reorder(industry_name, change)
+  )
+
+ggplot(top_movers, aes(x = change, y = industry_name, fill = change > 0)) +
+  geom_col() +
+  geom_vline(xintercept = 0, linewidth = 0.3) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("#d7191c", "#2c7bb6"),
+                    labels = c("Fewer women", "More women"),
+                    name = NULL) +
+  labs(
+    x = "Change in Women's Share of Employment, 1990-2025",
+    y = NULL,
+    title = "The Biggest Shifts Are Modest and Go Both Ways"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+The single largest increase is "Other personal services" at +22 percentage points. The largest decrease is "Wired and wireless telecommunications" at -26 pp. But these are outliers: the standard deviation of changes across all 209 industries is just 6 percentage points.
+
+## Summary
+
+Across 209 CES industries over 35 years:
+
+- The distribution of women's employment shares is unimodal and highly stable.
+- The mean share has barely moved (40% in 1990, 40% in 2025).
+- Only 8 industries crossed from minority-women to majority-women; 6 went the opposite way.
+- The correlation between 1990 and 2025 industry gender composition is 0.955.
+- A panel AR(1) model estimates $\hat{\rho} = 0.92$, strongly rejecting both unit roots and explosive dynamics. Only 2 of 209 industries show statistically significant explosive behavior.
+- Industries that start more female-dominated exhibit mild *mean reversion*, not acceleration.
+- The Duncan-Duncan segregation index has barely declined.
+- The employment-weighted story reflects the growth of health care and education as sectors, not a broad pattern of women entering previously male industries.
+
+The data does not support the claim that women are "taking over" industries. The labor market is highly segregated by gender, and that segregation has been remarkably persistent. What movement exists is slow, small, and goes in both directions.
