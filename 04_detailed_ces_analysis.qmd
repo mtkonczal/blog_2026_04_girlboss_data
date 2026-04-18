@@ -438,3 +438,29 @@ Across 209 CES industries over 35 years:
 - The employment-weighted story reflects the growth of health care and education as sectors, not a broad pattern of women entering previously male industries.
 
 The data does not support the claim that women are "taking over" industries. The labor market is highly segregated by gender, and that segregation has been remarkably persistent. What movement exists is slow, small, and goes in both directions.
+
+
+## Additional fact-checking
+
+```{r code}
+di %>% filter(year %in% c(1990,2025)) %>%
+  group_by(year) %>%
+  summarize(n = n(), total = sum(total)) %>%
+  left_join(
+    ces_women %>% filter(industry_name == "Total private") %>% select(year, total_private = total),
+    by="year"
+  ) %>%
+  mutate(total_percent = total/total_private)
+
+ces_women %>% filter(year == 2025) %>%
+  filter(diffusion_index) %>%
+  mutate(is_na_women = is.na(pct_women)) %>%
+  group_by(is_na_women) %>%
+  summarize(n = n(), avg_total = mean(total))
+
+ces_women %>% filter(year == 2025) %>%
+  filter(diffusion_index, is.na(pct_women)) %>%
+  count(supersector_name)
+```
+
+209 sub-industries reflect 93% of jobs.
