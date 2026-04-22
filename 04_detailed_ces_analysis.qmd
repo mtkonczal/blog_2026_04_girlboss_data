@@ -467,6 +467,13 @@ ces_women %>% filter(year == 2025, industry_display_level <= 2) %>%
   select(industry_name, supersector_name, industry_display_level, pct_women) %>%
   arrange(pct_women)
 
+ces_women %>% filter(year %in% c(1990,2025), industry_display_level <= 2) %>%
+  group_by(industry_name) %>%
+  summarize(
+    change_total = total[year == 2025] - total[year == 1990],
+    change_women = women[year == 2025] - women[year == 1990],
+    pct_women_1990 = pct_women[year == 1990],
+    pct_women_2025 = pct_women[year == 2025])
 ```
 
 209 sub-industries reflect 93% of jobs.
