@@ -461,6 +461,14 @@ ces_women %>% filter(year == 2025) %>%
 ces_women %>% filter(year == 2025) %>%
   filter(diffusion_index, is.na(pct_women)) %>%
   count(supersector_name)
+
+
+ces_women %>% filter(year == 2025, industry_display_level <= 2) %>%
+  select(industry_name, supersector_name, industry_display_level, pct_women) %>%
+  arrange(pct_women)
+
 ```
 
 209 sub-industries reflect 93% of jobs.
+
+Women most represented in private education and health services.
